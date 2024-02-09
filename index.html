@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" href="https://cdn.rawgit.com/Chalarangelo/mini.css/v3.0.1/dist/mini-default.min.css">
+    <style>
+        .chat__message {
+            height: 26px;
+            padding: 0 16px;
+            margin-bottom: 12px;
+
+            line-height: 26px;
+
+            border: 1px solid #000;
+            border-radius: 26px;
+            background: #fff;
+        }
+
+        .chat__circle-wrapper {
+            display: flex;
+            justify-content: center;
+
+            max-width: 100%;
+            width: 150px;
+            overflow: hidden;
+            border-radius: 50%;
+
+            aspect-ratio: 1 / 1;
+        }
+
+        .chat__circle {
+            height: 100%;
+        }
+
+        .typing-indicator {
+            height: 16px;
+        }
+
+        .circle-record {
+            position: fixed;
+            bottom: 12px;
+            right: 12px;
+        }
+
+        .circle {
+            display: flex;
+            align-items: center;
+
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+
+            background-color: #fff;
+            opacity: 1;
+
+            transition: opacity 0.3s;
+        }
+
+        .circle_hidden {
+            opacity: 0;
+
+            z-index: -1;
+        }
+
+        .circle__video-wrapper {
+            display: flex;
+            justify-content: center;
+
+            width: 100%;
+            overflow: hidden;
+            border-radius: 50%;
+
+            aspect-ratio: 1 / 1;
+        }
+
+        .circle__video {
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="typing-indicator"></div>
+    <main class="chat">
+
+    </main>
+    <form class="message-form">
+        <input class="message-form__input">
+    </form>
+    <div class="circle circle_hidden">
+        <div class="circle__video-wrapper">
+            <video class="circle__video"></video>
+        </div>
+    </div>
+    <button type="button" class="circle-record">🎬</button>
+    <script>
+        const BACKEND_PROTOCOL = 'https://';
+        const BACKEND_HOST = '1df4-178-148-185-42.ngrok-free.app';
+        const socket = new WebSocket(`wss://${BACKEND_HOST}`);
+
+        const chat = document.querySelector('.chat');
+        const messageForm = document.querySelector('.message-form');
+        const messageFormInput = document.querySelector('.message-form__input');
+        const circleRecord = document.querySelector('.circle-record');
+        const circle = document.querySelector('.circle');
+        const circleVideo = document.querySelector('.circle__video');
+        const circleFinish = document.querySelector('.circle__finish');
+        const typingIndicator = document.querySelector('.typing-indicator');
+
+        function onChat(chatMessages) {
+            chat.textContent = '';
+            for(const message of chatMessages) {
+                if (message.type === 'message') {
+                    onMessage(message.message);
+                }
+
+                if (message.type === 'circle') {
+                    onCircle(BACKEND_PROTOCOL + BACKEND_HOST + message.message);
+                }
+
+            }
+        }
+
+        chat.addEventListener('click', (event) => {
+            const target = event.target;
+
+            if (!target.classList.contains('chat__circle')) {
+                return;
+            }
+
+            target.currentTime = 0;
+            target.play();
+        });
+
+        function onMessage(message) {
+            const bubble = document.createElement('div');
+
+            bubble.classList.add('chat__message');
+            bubble.textContent = message;
+
+            chat.appendChild(bubble);
+        }
+
+        function onCircle(url, autoPlay = true) {
+            const wrapper = document.createElement('div');
+            const bubble = document.createElement('video');
+
+            wrapper.classList.add('chat__circle-wrapper');
+            bubble.classList.add('chat__circle');
+            bubble.src = url;
+
+            chat.appendChild(wrapper);
+            wrapper.appendChild(bubble);
+
+            if (autoPlay === false) {
+                bubble.play();
+            }
+        }
+
+        function onTypingChange(count) {
+            if (count === 0) {
+                typingIndicator.textContent = '';
+
+                return;
+            }
+
+            typingIndicator.textContent = count + ' человек че-то печатаеть/ють... ';
+        }
+
+        socket.addEventListener('open', (event) => {
+            socket.addEventListener('message', (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'chat') {
+                    onChat(data.chat);
+                }
+
+                if (data.type === 'message') {
+                    onMessage(data.message);
+                }
+
+                if (data.type === 'circle') {
+                    onCircle(BACKEND_PROTOCOL + BACKEND_HOST + data.message, false);
+                }
+
+                if (data.type === 'typing-change') {
+                    onTypingChange(data.count);
+                }
+            });
+        });
+
+        messageForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+
+            const message = messageFormInput.value;
+            socket.send(JSON.stringify({
+                type: 'message',
+                message,
+            }));
+        });
+
+        let timer;
+
+        messageFormInput.addEventListener('input', () => {
+            socket.send(JSON.stringify({
+                type: 'start-typing',
+            }));
+
+            if (timer) {
+                clearTimeout(timer);
+            }
+
+            timer = setTimeout(() => {
+                timer = undefined;
+                socket.send(JSON.stringify({
+                    type: 'stop-typing',
+                }));
+            }, 3000);
+        });
+
+        let mediaRecorder;
+        let chunks = [];
+
+        function finishCircle() {
+            circle.classList.add('circle_hidden');
+
+            circleVideo.pause();
+
+            mediaRecorder.stop();
+
+            window.removeEventListener('mouseup', finishCircle);
+        }
+
+        circleRecord.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+
+            circle.classList.remove('circle_hidden');
+
+            navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: { facingMode: 'user' },
+            }).then((mediaStream) => {
+                circleVideo.srcObject = mediaStream;
+
+                circleVideo.onloadedmetadata = () => {
+                    circleVideo.play();
+
+                        mediaRecorder = new MediaRecorder(mediaStream, {
+                        mimeType: 'video/webm',
+                    });
+
+                    setTimeout(() => {
+                        mediaRecorder.start();
+
+                        mediaRecorder.ondataavailable = (e) => {
+                            chunks.push(e.data);
+                        };
+
+                        mediaRecorder.onstop = () => {
+                            const blob = new Blob(chunks, {
+                                type: 'video/webm',
+                            });
+
+                            socket.send(blob);
+
+                            console.log(blob);
+                        }
+
+                    }, 500);
+                };
+            });
+
+            window.addEventListener('mouseup', finishCircle);
+        });
+    </script>
+</body>
+</html>
